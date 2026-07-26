@@ -1,13 +1,19 @@
 """intarsia-print CLI."""
 
 import argparse
+import os
 import sys
 
+import numpy as np
 from PIL import Image
 
 from .clean import clean_levels
-from .preview import side_by_side
+from .mesh import build_mesh, check_mesh, level_heights, to_float_coords, write_stl
+from .preview import hillshade_image, side_by_side
 from .quantize import quantize
+
+# Elegoo Saturn 4 Ultra
+BUILD_X_MM, BUILD_Y_MM = 218.0, 123.0
 
 
 def _parse_assign(items):
@@ -34,14 +40,22 @@ def _print_report(report):
 
 
 def make_levels(image, args):
-    """Shared quantize + clean pipeline; returns (levels, report)."""
+    """Shared quantize -> downsample -> clean pipeline; returns (levels, report)."""
     levels, report = quantize(
         image, args.levels, order=args.order, assign_overrides=_parse_assign(args.assign)
     )
     print(f"{args.image}: {image.size[0]}x{image.size[1]}, {args.levels} levels")
     _print_report(report)
+    if max(image.size) > args.max_px:
+        scale = args.max_px / max(image.size)
+        w, h = round(image.size[0] * scale), round(image.size[1] * scale)
+        levels = np.asarray(
+            Image.fromarray(levels.astype(np.uint8)).resize((w, h), Image.NEAREST),
+            dtype=np.int64,
+        )
+        print(f"  working resolution {w}x{h} (--max-px {args.max_px})")
     if not args.no_clean:
-        px_mm = args.width_mm / image.size[0]
+        px_mm = args.width_mm / levels.shape[1]
         min_feature_px = args.min_feature / px_mm
         levels, stats = clean_levels(levels, args.levels, min_feature_px)
         report.coverage = stats["coverage"]
@@ -62,6 +76,40 @@ def cmd_levels(args):
     print(f"wrote {args.out} — open it and check the separation before meshing")
 
 
+def cmd_build(args):
+    image = Image.open(args.image)
+    levels, report = make_levels(image, args)
+
+    H, W = levels.shape
+    px_mm = args.width_mm / W
+    depth_mm = H * px_mm
+    heights = level_heights(args.levels, args.base_mm, args.step_mm)
+    if args.width_mm > BUILD_X_MM or depth_mm > BUILD_Y_MM:
+        print(f"  warning: {args.width_mm:.0f} x {depth_mm:.1f} mm exceeds the Saturn 4 Ultra "
+              f"plate ({BUILD_X_MM:.0f} x {BUILD_Y_MM:.0f} mm)", file=sys.stderr)
+
+    tris_int, zvals = build_mesh(levels, px_mm, args.base_mm, args.step_mm)
+    tris_mm = to_float_coords(tris_int, zvals, px_mm, H)
+    chk = check_mesh(tris_int, tris_mm, levels, px_mm, args.base_mm, args.step_mm)
+
+    write_stl(args.out, tris_mm)
+    size_mb = os.path.getsize(args.out) / 1e6
+    print(f"wrote {args.out}: {len(tris_mm)} triangles, {size_mb:.1f} MB")
+    print(f"  size: {args.width_mm:.2f} x {depth_mm:.2f} x {zvals[-1]:.2f} mm, flat bottom on Z=0")
+    print(f"  watertight: {'yes' if chk['watertight'] else 'NO'}"
+          f"  (open edges: {chk['open_edges']}, non-manifold edges: {chk['nonmanifold_edges']})")
+    print(f"  volume: mesh {chk['signed_volume_mm3']:.1f} mm3, "
+          f"analytic {chk['analytic_volume_mm3']:.1f} mm3 "
+          f"{'(match)' if chk['volume_ok'] else '(MISMATCH — orientation bug)'}")
+    if not chk["watertight"] or not chk["volume_ok"]:
+        raise SystemExit("error: mesh failed self-check, not safe to print")
+
+    base = os.path.splitext(args.out)[0]
+    side_by_side(image, levels, report, heights_mm=heights).save(base + "-levels.png")
+    hillshade_image(zvals[levels + 1], px_mm).save(base + "-relief.png")
+    print(f"wrote {base}-levels.png and {base}-relief.png — look at both before slicing")
+
+
 def _add_level_options(sp):
     sp.add_argument("-n", "--levels", type=int, default=5, help="number of height levels (default 5)")
     sp.add_argument("--order", choices=["dark-low", "light-low"], default="dark-low",
@@ -73,6 +121,8 @@ def _add_level_options(sp):
     sp.add_argument("--min-feature", type=float, default=0.5, metavar="MM",
                     help="smallest printable feature in mm; thinner details are absorbed (default 0.5)")
     sp.add_argument("--no-clean", action="store_true", help="skip the cleanup pass (debugging)")
+    sp.add_argument("--max-px", type=int, default=512,
+                    help="cap working resolution (long side, default 512); higher = finer detail, bigger STL")
 
 
 def main(argv=None):
@@ -84,6 +134,16 @@ def main(argv=None):
     lv.add_argument("-o", "--out", default="levels-preview.png", help="preview PNG path")
     _add_level_options(lv)
     lv.set_defaults(func=cmd_levels)
+
+    bd = sub.add_parser("build", help="image -> STL (quantize, clean, mesh, self-check, previews)")
+    bd.add_argument("image")
+    bd.add_argument("-o", "--out", default="relief.stl", help="output STL path")
+    _add_level_options(bd)
+    bd.add_argument("--base-mm", type=float, default=2.0,
+                    help="backing plate thickness in mm (default 2.0); level 0 is flush with it")
+    bd.add_argument("--step-mm", type=float, default=1.0,
+                    help="height difference between adjacent levels in mm (default 1.0)")
+    bd.set_defaults(func=cmd_build)
 
     args = p.parse_args(argv)
     args.func(args)

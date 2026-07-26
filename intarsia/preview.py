@@ -62,6 +62,6 @@ def hillshade_image(height_mm, px_mm):
     shade = (-gx * lx - gy * ly + lz) / norm / np.sqrt(lx**2 + ly**2 + lz**2)
     shade = np.clip(shade, 0, 1)
     # mix in a bit of height so levels read even on flat tops
-    hn = (z - z.min()) / max(z.ptp(), 1e-9)
+    hn = (z - z.min()) / max(np.ptp(z), 1e-9)
     val = np.clip(0.75 * shade + 0.25 * hn, 0, 1)
     return Image.fromarray((val * 255).astype(np.uint8), "L").convert("RGB")
