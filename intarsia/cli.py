@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image
 
 from .clean import clean_levels
+from .gemini_gen import build_prompt, generate_image
 from .mesh import build_mesh, check_mesh, level_heights, to_float_coords, write_stl
 from .preview import hillshade_image, side_by_side
 from .quantize import quantize
@@ -125,6 +126,28 @@ def _add_level_options(sp):
                     help="cap working resolution (long side, default 512); higher = finer detail, bigger STL")
 
 
+def cmd_gen(args):
+    prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt)
+    print(f"prompt: {prompt}")
+    generate_image(prompt, args.out)
+    print(f"wrote {args.out} — inspect it, then run: intarsia build {args.out}")
+
+
+def cmd_run(args):
+    prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt)
+    print(f"prompt: {prompt}")
+    generate_image(prompt, args.image_out)
+    print(f"\nwrote {args.image_out} — OPEN AND LOOK AT IT before continuing.")
+    print("Check: flat solid colors, big simple shapes, no gradients or fine detail.")
+    if not args.yes:
+        answer = input("Proceed to STL with this image? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("stopped. Re-run `intarsia run` for a new image, or tweak the prompt.")
+            return
+    args.image = args.image_out
+    cmd_build(args)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="intarsia", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -144,6 +167,30 @@ def main(argv=None):
     bd.add_argument("--step-mm", type=float, default=1.0,
                     help="height difference between adjacent levels in mm (default 1.0)")
     bd.set_defaults(func=cmd_build)
+
+    gn = sub.add_parser("gen", help="generate a flat source image from a text prompt (Gemini)")
+    gn.add_argument("prompt")
+    gn.add_argument("-o", "--out", default="source.png", help="output image path")
+    gn.add_argument("-n", "--levels", type=int, default=5,
+                    help="planned number of height levels; sets the color count in the prompt")
+    gn.add_argument("--raw-prompt", action="store_true",
+                    help="send the prompt verbatim, without the flat-art template")
+    gn.set_defaults(func=cmd_gen)
+
+    rn = sub.add_parser("run", help="prompt -> image -> approve -> STL, end to end")
+    rn.add_argument("prompt")
+    rn.add_argument("-o", "--out", default="relief.stl", help="output STL path")
+    rn.add_argument("--image-out", default="source.png", help="where to save the generated image")
+    rn.add_argument("--raw-prompt", action="store_true",
+                    help="send the prompt verbatim, without the flat-art template")
+    rn.add_argument("--yes", action="store_true",
+                    help="skip the image approval question (non-interactive use)")
+    _add_level_options(rn)
+    rn.add_argument("--base-mm", type=float, default=2.0,
+                    help="backing plate thickness in mm (default 2.0); level 0 is flush with it")
+    rn.add_argument("--step-mm", type=float, default=1.0,
+                    help="height difference between adjacent levels in mm (default 1.0)")
+    rn.set_defaults(func=cmd_run)
 
     args = p.parse_args(argv)
     args.func(args)
