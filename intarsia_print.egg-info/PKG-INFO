@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: intarsia-print
-Version: 0.1.0
-Summary: Flat graphic image or text prompt -> multi-level bas-relief STL for resin printing
-Requires-Python: >=3.10
-Requires-Dist: numpy
-Requires-Dist: pillow
-Requires-Dist: scipy
