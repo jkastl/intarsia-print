@@ -64,12 +64,38 @@ produces an unprintable model.
 | `--base-mm` | backing plate thickness (default 2.0) |
 | `--step-mm` | height difference per level (default 1.0) |
 | `--order` | `dark-low` (default) or `light-low` |
+| `--depth-order` | order levels by real-world distance instead of brightness (see below) |
 | `--assign '#rrggbb=2'` | force the region nearest that color to level 2; repeatable |
 | `--min-feature` | smallest printable feature in mm; thinner detail is absorbed (default 0.5) |
 | `--max-px` | working resolution cap; higher = finer detail, bigger STL (default 512) |
 
 When the automatic level assignment picks badly, read the palette hex codes
 from the `levels` report and pin regions with `--assign`.
+
+## Realistic depth ordering
+
+By default levels follow brightness, which is arbitrary with respect to the
+scene: a dark foreground and a dark sky land on the same height. `--depth-order`
+instead stacks levels by how far the depicted things actually are from the
+viewer — background flush with the plate, the nearest parts (a nose, a
+foreground paw) protruding furthest:
+
+```sh
+intarsia build dog.png -n 5 --width-mm 100 --depth-order -o dog.stl
+```
+
+This is the one judgement in the pipeline that needs to understand the
+picture, so it asks Gemini to rank the palette and needs `GEMINI_API_KEY`.
+It prints the equivalent `--assign` flags, so the exact same result can be
+rebuilt offline and deterministically:
+
+```
+depth order (farthest -> nearest): #f4ecd4 #e47c2d #2c6c74 #b44c4c #1c3c2c
+reproduce offline with: --assign '#f4ecd4=0' --assign '#e47c2d=1' ...
+```
+
+Explicit `--assign` pins always win over the ranking, so you can correct one
+region and let Gemini order the rest.
 
 ## Output
 

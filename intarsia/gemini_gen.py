@@ -11,13 +11,17 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import urllib.error
 import urllib.request
 
 # Nano Banana Pro — much stronger prompt adherence (exact color counts, flat
 # fills) than the base flash image model, which is what this pipeline needs.
 MODEL = "gemini-3-pro-image-preview"
-_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+# Cheap vision model for the depth-ranking question; no image output needed.
+DEPTH_MODEL = "gemini-2.5-flash"
+_BASE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+_URL = _BASE.format(model=MODEL)
 
 # The constraints mirror the pipeline's failure modes one by one:
 # gradients -> banding; texture/small details -> sub-printable slivers;
@@ -55,49 +59,63 @@ def build_prompt(subject, n_colors, raw=False, with_ref=False):
     return tpl.format(subject=subject, colors=n_colors)
 
 
-def generate_image(prompt, out_path, api_key=None, aspect=None, ref_image=None):
-    """Calls Gemini, writes the first returned image to out_path (PNG/etc).
-
-    ref_image: optional path to a photo sent along with the prompt, for
-    "flatten this photo" / "just the dog's head from this picture" requests.
-    """
+def _require_key(api_key):
     api_key = api_key or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise SystemExit(
             "error: set GEMINI_API_KEY (https://aistudio.google.com/apikey), "
             "or skip generation and pass your own image to `build`."
         )
-    parts = [{"text": prompt}]
-    if ref_image:
-        mime = mimetypes.guess_type(ref_image)[0]
-        if mime not in ("image/png", "image/jpeg", "image/webp"):
-            raise SystemExit(f"error: --from-image must be png/jpg/webp, got {ref_image}")
-        with open(ref_image, "rb") as f:
-            parts.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(f.read()).decode()}})
-    # Nano Banana Pro is a thinking model: it returns TEXT parts alongside the
-    # IMAGE part, so both modalities must be requested.
-    config = {"responseModalities": ["TEXT", "IMAGE"]}
-    if aspect:
-        config["imageConfig"] = {"aspectRatio": aspect}
+    return api_key
+
+
+def _image_part(path, flag="--from-image"):
+    mime = mimetypes.guess_type(path)[0]
+    if mime not in ("image/png", "image/jpeg", "image/webp"):
+        raise SystemExit(f"error: {flag} must be png/jpg/webp, got {path}")
+    with open(path, "rb") as f:
+        return _bytes_part(f.read(), mime)
+
+
+def _bytes_part(data, mime="image/png"):
+    return {"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode()}}
+
+
+def _post(model, parts, config, api_key):
     body = json.dumps(
-        {
-            "contents": [{"parts": parts}],
-            "generationConfig": config,
-        }
+        {"contents": [{"parts": parts}], "generationConfig": config}
     ).encode()
     req = urllib.request.Request(
-        _URL,
+        _BASE.format(model=model),
         data=body,
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.load(resp)
+            return json.load(resp)
     except urllib.error.HTTPError as e:
         detail = e.read().decode(errors="replace")[:500]
         raise SystemExit(f"error: Gemini API returned {e.code}: {detail}")
     except urllib.error.URLError as e:
         raise SystemExit(f"error: could not reach Gemini API: {e.reason}")
+
+
+def generate_image(prompt, out_path, api_key=None, aspect=None, ref_image=None):
+    """Calls Gemini, writes the first returned image to out_path (PNG/etc).
+
+    ref_image: optional path to a photo sent along with the prompt, for
+    "flatten this photo" / "just the dog's head from this picture" requests.
+    """
+    api_key = _require_key(api_key)
+    parts = [{"text": prompt}]
+    if ref_image:
+        parts.append(_image_part(ref_image))
+    # Nano Banana Pro is a thinking model: it returns TEXT parts alongside the
+    # IMAGE part, so both modalities must be requested.
+    config = {"responseModalities": ["TEXT", "IMAGE"]}
+    if aspect:
+        config["imageConfig"] = {"aspectRatio": aspect}
+    data = _post(MODEL, parts, config, api_key)
 
     for cand in data.get("candidates", []):
         for part in cand.get("content", {}).get("parts", []):
@@ -107,3 +125,51 @@ def generate_image(prompt, out_path, api_key=None, aspect=None, ref_image=None):
                     f.write(base64.b64decode(blob["data"]))
                 return out_path
     raise SystemExit(f"error: Gemini returned no image. Response: {json.dumps(data)[:500]}")
+
+
+DEPTH_PROMPT = (
+    "The attached image is a flat poster-style illustration that will become "
+    "a layered bas-relief carving: each color becomes one physical height "
+    "layer. Its {n} colors are, as hex codes: {hexes}. "
+    "Rank ALL {n} colors by the real-world distance from the viewer of the "
+    "things they depict, farthest first. The background or sky is farthest; "
+    "parts of the subject closest to the camera (a nose, a foreground paw) "
+    "are nearest. Reply with ONLY a JSON array of the {n} hex codes, ordered "
+    "farthest to nearest, no other text."
+)
+
+
+def rank_depth(level_map_png, palette_hex, api_key=None):
+    """Asks Gemini to order palette colors far -> near. Returns the ordered
+    hex list (validated to be a permutation of palette_hex).
+
+    level_map_png: PNG bytes of the *quantized* level map, so the colors the
+    model sees are exactly the hex codes it is being asked to rank.
+    """
+    api_key = _require_key(api_key)
+    lower = [h.lower() for h in palette_hex]
+    if len(set(lower)) != len(lower):
+        raise SystemExit(
+            "error: two levels share a display color; depth ranking would be "
+            "ambiguous. Pin levels manually with --assign instead."
+        )
+    prompt = DEPTH_PROMPT.format(n=len(lower), hexes=", ".join(lower))
+    parts = [{"text": prompt}, _bytes_part(level_map_png)]
+    data = _post(DEPTH_MODEL, parts, {"temperature": 0}, api_key)
+
+    text = "".join(
+        part.get("text", "")
+        for cand in data.get("candidates", [])
+        for part in cand.get("content", {}).get("parts", [])
+    )
+    m = re.search(r"\[.*?\]", text, re.DOTALL)
+    try:
+        ranked = [str(h).lower() for h in json.loads(m.group(0))] if m else None
+    except json.JSONDecodeError:
+        ranked = None
+    if ranked is None or sorted(ranked) != sorted(lower):
+        raise SystemExit(
+            f"error: could not get a usable depth ranking from Gemini "
+            f"(reply: {text[:300]!r}). Pin levels manually with --assign."
+        )
+    return ranked

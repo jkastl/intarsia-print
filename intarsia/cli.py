@@ -1,6 +1,7 @@
 """intarsia-print CLI."""
 
 import argparse
+import io
 import os
 import sys
 
@@ -8,9 +9,10 @@ import numpy as np
 from PIL import Image
 
 from .clean import clean_levels
-from .gemini_gen import build_prompt, generate_image
+from .color import delta_e, srgb_to_lab
+from .gemini_gen import build_prompt, generate_image, rank_depth
 from .mesh import build_mesh, check_mesh, level_heights, to_float_coords, write_stl
-from .preview import hillshade_image, side_by_side
+from .preview import hillshade_image, level_map_image, side_by_side
 from .quantize import quantize
 
 # Elegoo Saturn 4 Ultra
@@ -40,6 +42,35 @@ def _print_report(report):
         print(f"  warning: {w}", file=sys.stderr)
 
 
+def _hex_lab(h):
+    c = h.lstrip("#")
+    return srgb_to_lab(np.array([int(c[i : i + 2], 16) for i in (0, 2, 4)]) / 255.0)
+
+
+def _depth_overrides(args, levels, report):
+    """Ask Gemini to order the palette far -> near; explicit --assign pins win.
+    Returns a complete {palette_hex: level} mapping."""
+    hexes = report.palette_hex()
+    buf = io.BytesIO()
+    level_map_image(levels, report.palette_rgb).save(buf, "PNG")
+    ranked = rank_depth(buf.getvalue(), hexes)
+    pal_lab = np.stack([_hex_lab(h) for h in hexes])
+    pinned = {}
+    for h, lvl in _parse_assign(args.assign).items():
+        nearest = hexes[int(np.argmin(delta_e(pal_lab, _hex_lab(h))))]
+        pinned[nearest.lower()] = lvl
+    free = [l for l in range(args.levels) if l not in pinned.values()]
+    mapping = dict(pinned)
+    for h in ranked:
+        if h not in mapping:
+            mapping[h] = free.pop(0)
+    flags = " ".join(f"--assign '{h}={l}'" for h, l in sorted(mapping.items(), key=lambda kv: kv[1]))
+    print("  depth order (farthest -> nearest): "
+          + " ".join(h for h, _ in sorted(mapping.items(), key=lambda kv: kv[1])))
+    print(f"  reproduce offline with: {flags}")
+    return mapping
+
+
 def make_levels(image, args):
     """Shared quantize -> downsample -> clean pipeline; returns (levels, report)."""
     levels, report = quantize(
@@ -47,6 +78,11 @@ def make_levels(image, args):
     )
     print(f"{args.image}: {image.size[0]}x{image.size[1]}, {args.levels} levels")
     _print_report(report)
+    if args.depth_order:
+        levels, report = quantize(
+            image, args.levels, order=args.order,
+            assign_overrides=_depth_overrides(args, levels, report),
+        )
     if max(image.size) > args.max_px:
         scale = args.max_px / max(image.size)
         w, h = round(image.size[0] * scale), round(image.size[1] * scale)
@@ -121,6 +157,11 @@ def _add_level_options(sp):
                     help="physical width of the piece in mm (default 100)")
     sp.add_argument("--min-feature", type=float, default=0.5, metavar="MM",
                     help="smallest printable feature in mm; thinner details are absorbed (default 0.5)")
+    sp.add_argument("--depth-order", action="store_true",
+                    help="order levels by real-world distance from the viewer instead of "
+                         "brightness — nearer parts protrude further. Asks Gemini to rank "
+                         "the palette (needs GEMINI_API_KEY) and prints the equivalent "
+                         "--assign flags so the result can be reproduced offline")
     sp.add_argument("--no-clean", action="store_true", help="skip the cleanup pass (debugging)")
     sp.add_argument("--max-px", type=int, default=512,
                     help="cap working resolution (long side, default 512); higher = finer detail, bigger STL")
