@@ -133,7 +133,8 @@ depth.
   regions rather than with pixel count: raising `--max-px` from 512 to 2048
   takes the poster example from 4.0 MB to 6.8 MB, not 16x that.
 - Sized against the Elegoo Saturn 4 Ultra plate (218 × 123 mm); slicing
-  happens downstream (e.g. Lychee).
+  happens downstream (e.g. Lychee). See [Printing](#printing) for orientation
+  and plate thickness.
 
 ## Source image requirements
 
@@ -141,3 +142,47 @@ Flat and graphic: large solid color regions, no gradients, no shading, no
 texture, no outlines, no tiny details. The `gen` prompt template asks Gemini
 for exactly this. Unsuitable images (photos, gradients) are detected and
 flagged rather than silently producing garbage.
+
+## Printing
+
+This tool stops at the STL — slicing and printing are yours. But the output is
+shaped by a few assumptions worth writing down, because they interact with the
+options above. None of this is verified against a real print yet; treat the
+numbers as starting points, not measurements.
+
+**Orientation: flat on the build plate, face up, no supports.** The back face
+is a glue surface. Tilting the model onto supports would leave nubs across it
+and ruin that, so the flat orientation is worth its costs. It picks up the
+build plate's texture, which if anything helps adhesion, and first-layer
+squish makes the plate run slightly thicker than `--base-mm` — measure a test
+piece if the total thickness has to be exact.
+
+**Backing plate thickness.** `--base-mm` accepts anything down to one layer,
+and will happily build a plate too thin to survive handling. Nothing warns
+you. Practical floors:
+
+| Piece width | `--base-mm` |
+| --- | --- |
+| up to ~100 mm | 2.0 |
+| 120–150 mm | 2.5–3.0 |
+| beyond that | 3.0+, roughly span/50 |
+
+Two things drive this, and neither is about print forces: a flat resin panel
+cups as it post-cures, and thin panels cup worse; and a large flat area
+printed directly on the plate adheres hard enough that prising a thin one off
+can crack it. A thin flexible scraper and a slightly warmed plate help.
+
+**A large flat bottom layer is demanding on printers without vat tilt.** A
+120 × 90 mm cross-section parallel to the plate is close to the worst case for
+straight-pull peel force. Printers with a tilting vat release (the Saturn 4
+Ultra among them) peel such a layer off progressively and largely remove this
+as a concern. On a conventional straight-lift printer it is a real constraint,
+and the fixes are all downstream of this tool — slower lift speeds, longer
+rest before lift, and a thicker plate for margin against delamination. If your
+printer lifts straight up, start at the thicker end of the table above and
+expect to tune lift settings rather than assuming the defaults transfer.
+
+**Layer height.** `--layer-mm` defaults to 0.05, which the Saturn 4 Ultra
+prints reliably. Set it to whatever your printer and resin actually do — level
+heights snap to it, so a mismatch means the slicer quietly rounds your relief
+somewhere other than where this tool reported it.
