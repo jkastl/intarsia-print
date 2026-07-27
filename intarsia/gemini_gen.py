@@ -100,7 +100,7 @@ def _post(model, parts, config, api_key):
         raise SystemExit(f"error: could not reach Gemini API: {e.reason}")
 
 
-def generate_image(prompt, out_path, api_key=None, aspect=None, ref_image=None):
+def generate_image(prompt, out_path, api_key=None, aspect=None, ref_image=None, size="4K"):
     """Calls Gemini, writes the first returned image to out_path (PNG/etc).
 
     ref_image: optional path to a photo sent along with the prompt, for
@@ -112,9 +112,16 @@ def generate_image(prompt, out_path, api_key=None, aspect=None, ref_image=None):
         parts.append(_image_part(ref_image))
     # Nano Banana Pro is a thinking model: it returns TEXT parts alongside the
     # IMAGE part, so both modalities must be requested.
+    # 4K by default: the source image's resolution is the hard ceiling on edge
+    # smoothness, since upsampling only enlarges the same staircase.
     config = {"responseModalities": ["TEXT", "IMAGE"]}
+    ic = {}
     if aspect:
-        config["imageConfig"] = {"aspectRatio": aspect}
+        ic["aspectRatio"] = aspect
+    if size:
+        ic["imageSize"] = size
+    if ic:
+        config["imageConfig"] = ic
     data = _post(MODEL, parts, config, api_key)
 
     for cand in data.get("candidates", []):

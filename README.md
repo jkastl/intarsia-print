@@ -77,7 +77,8 @@ produces an unprintable model.
 | `--depth-order` | order levels by real-world distance instead of brightness (see below) |
 | `--assign '#rrggbb=2'` | force the region nearest that color to level 2; repeatable |
 | `--min-feature` | smallest printable feature in mm; thinner detail is absorbed (default 0.5) |
-| `--max-px` | working resolution cap; higher = finer detail (default 512) |
+| `--xy-um` | printer XY pixel in microns (default 19); sets working resolution |
+| `--max-px` | override working resolution; lower is faster but leaves visible steps |
 
 When the automatic level assignment picks badly, read the palette hex codes
 from the `levels` report and pin regions with `--assign`.
@@ -112,6 +113,31 @@ picture, so it asks Gemini and needs `GEMINI_API_KEY`. It prints both the
 `--assign` and `--heights` flags that reproduce the result exactly, offline
 and deterministically. Explicit `--assign` pins always win over the ranking,
 so you can correct one region and let Gemini place the rest.
+
+## Edge smoothness
+
+Regions are built as columns on a pixel grid, so region boundaries are
+staircases rather than smooth curves. What matters is the step size relative
+to the printer: at `--xy-um` (default 19, the Saturn 4 Ultra's XY pixel) a step
+is one printer pixel, which the printer cannot render as a visible ledge. The
+working resolution defaults to whatever achieves that, and every run reports
+the step size it actually got:
+
+```
+edge resolution: 19 um steps at 90.0 mm wide — below the printer's XY pixel,
+                 so edges cannot step visibly
+```
+
+**The source image is the hard ceiling.** Upsampling a small image only makes
+bigger copies of the same staircase, so an 800 px source cannot produce smooth
+edges at any setting — the run warns when this is the case and tells you the
+resolution you need. `gen` requests 4K by default for this reason, which covers
+a 90 mm piece at 19 µm.
+
+Cost scales with resolution: the poster example at 90 mm wide is 4.0 MB at
+`--max-px 512` (176 µm steps, visibly stepped) and 54 MB at the 19 µm default.
+Use `--max-px 512` while iterating on levels and depth, then drop it for the
+final build.
 
 ## Layer heights
 

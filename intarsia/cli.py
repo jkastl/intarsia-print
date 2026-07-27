@@ -49,6 +49,21 @@ def _print_report(report):
         print(f"  warning: {w}", file=sys.stderr)
 
 
+def _target_px(args, size, ignore_source=False):
+    """Working resolution (long side) that puts one working pixel at the
+    printer's XY pixel, so edge steps fall below what it can resolve.
+
+    Capped by the source image: upsampling a small image only makes bigger
+    copies of the same staircase, so there is nothing to gain.
+    """
+    if args.max_px and not ignore_source:
+        return args.max_px
+    W, H = size
+    long_mm = args.width_mm * max(1.0, H / W)
+    need = long_mm * 1000.0 / args.xy_um
+    return need if ignore_source else min(max(size), need)
+
+
 def _hex_lab(h):
     c = h.lstrip("#")
     return srgb_to_lab(np.array([int(c[i : i + 2], 16) for i in (0, 2, 4)]) / 255.0)
@@ -132,14 +147,26 @@ def make_levels(image, args):
         print("  reproduce offline with: "
               + " ".join(f"--assign '{h}={l}'"
                          for h, l in sorted(mapping.items(), key=lambda kv: kv[1])))
-    if max(image.size) > args.max_px:
-        scale = args.max_px / max(image.size)
+    max_px = _target_px(args, image.size)
+    if max(image.size) > max_px:
+        scale = max_px / max(image.size)
         w, h = round(image.size[0] * scale), round(image.size[1] * scale)
         levels = np.asarray(
             Image.fromarray(levels.astype(np.uint8)).resize((w, h), Image.NEAREST),
             dtype=np.int64,
         )
-        print(f"  working resolution {w}x{h} (--max-px {args.max_px})")
+        print(f"  working resolution {w}x{h}")
+    step_um = args.width_mm / levels.shape[1] * 1000
+    note = "below the printer's XY pixel, so edges cannot step visibly" \
+        if step_um <= args.xy_um * 1.01 else "VISIBLE staircase on curved edges"
+    print(f"  edge resolution: {step_um:.0f} um steps at {args.width_mm} mm wide — {note}")
+    if step_um > args.xy_um * 1.01:
+        need = int(np.ceil(_target_px(args, image.size, ignore_source=True)))
+        if max(image.size) < need:
+            print(f"  warning: source image is {image.size[0]}x{image.size[1]}; "
+                  f"{need} px on the long side is needed for {args.xy_um:.0f} um edges at "
+                  f"{args.width_mm} mm. Generate a larger source image, or the edges stay "
+                  "stepped no matter what --max-px says.", file=sys.stderr)
     if not args.no_clean:
         px_mm = args.width_mm / levels.shape[1]
         min_feature_px = args.min_feature / px_mm
@@ -214,8 +241,13 @@ def _add_level_options(sp):
                          "the palette (needs GEMINI_API_KEY) and prints the equivalent "
                          "--assign flags so the result can be reproduced offline")
     sp.add_argument("--no-clean", action="store_true", help="skip the cleanup pass (debugging)")
-    sp.add_argument("--max-px", type=int, default=512,
-                    help="cap working resolution (long side, default 512); higher = finer detail, bigger STL")
+    sp.add_argument("--xy-um", type=float, default=19.0, metavar="UM",
+                    help="printer XY pixel size in microns (default 19, Saturn 4 Ultra); "
+                         "sets the working resolution so edge steps land below what the "
+                         "printer can resolve")
+    sp.add_argument("--max-px", type=int, default=None,
+                    help="override working resolution (long side). Lower is much faster to "
+                         "iterate on but leaves visible staircase edges")
     sp.add_argument("--base-mm", type=float, default=2.0,
                     help="backing plate thickness in mm (default 2.0); level 0 is flush with it")
     sp.add_argument("--step-mm", type=float, default=0.4,
@@ -234,7 +266,8 @@ def cmd_gen(args):
     prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt,
                           with_ref=bool(args.from_image))
     print(f"prompt: {prompt}")
-    generate_image(prompt, args.out, aspect=args.aspect, ref_image=args.from_image)
+    generate_image(prompt, args.out, aspect=args.aspect, ref_image=args.from_image,
+                   size=args.image_size)
     print(f"wrote {args.out} — inspect it, then run: intarsia build {args.out}")
 
 
@@ -242,7 +275,8 @@ def cmd_run(args):
     prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt,
                           with_ref=bool(args.from_image))
     print(f"prompt: {prompt}")
-    generate_image(prompt, args.image_out, aspect=args.aspect, ref_image=args.from_image)
+    generate_image(prompt, args.image_out, aspect=args.aspect,
+                   ref_image=args.from_image, size=args.image_size)
     print(f"\nwrote {args.image_out} — OPEN AND LOOK AT IT before continuing.")
     print("Check: flat solid colors, big simple shapes, no gradients or fine detail.")
     if not args.yes:
@@ -279,6 +313,9 @@ def main(argv=None):
                     help="send the prompt verbatim, without the flat-art template")
     gn.add_argument("--aspect", metavar="W:H",
                     help="image aspect ratio, e.g. 16:9 or 4:3 (default: model's choice)")
+    gn.add_argument("--image-size", choices=["1K", "2K", "4K"], default="4K",
+                    help="generated image resolution (default 4K); the source image caps how "
+                         "smooth the printed edges can be")
     gn.add_argument("--from-image", metavar="PHOTO",
                     help="reference photo; the prompt says what to keep from it "
                          "(e.g. 'the dog's head from this photo')")
@@ -294,6 +331,9 @@ def main(argv=None):
                     help="skip the image approval question (non-interactive use)")
     rn.add_argument("--aspect", metavar="W:H",
                     help="image aspect ratio, e.g. 16:9 or 4:3 (default: model's choice)")
+    rn.add_argument("--image-size", choices=["1K", "2K", "4K"], default="4K",
+                    help="generated image resolution (default 4K); the source image caps how "
+                         "smooth the printed edges can be")
     rn.add_argument("--from-image", metavar="PHOTO",
                     help="reference photo; the prompt says what to keep from it "
                          "(e.g. 'the dog's head from this photo')")
