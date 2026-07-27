@@ -31,8 +31,6 @@ End to end — prompt → image → **look at the image and approve it** → STL
 intarsia run "a fox sitting under a pine tree" -n 5 --width-mm 120 -o fox.stl
 ```
 
-Step by step:
-
 From a photo — attach a reference picture and say what to keep from it:
 
 ```sh
@@ -156,8 +154,9 @@ depth.
   and signed volume against the volume computed straight from the level map.
   The tool refuses to emit a mesh that fails.
 - Flat areas are merged, so cost scales with the length of the edges between
-  regions rather than with pixel count: raising `--max-px` from 512 to 2048
-  takes the poster example from 4.0 MB to 6.8 MB, not 16x that.
+  regions rather than with pixel count. Measured on the poster example at 90 mm
+  wide: 4.0 MB at 512 px, 9.0 MB at 1024, 20.3 MB at 2048, 54 MB at 4737 — a
+  9x resolution increase for 13x the size, not 85x.
 - Sized against the Elegoo Saturn 4 Ultra plate (218 × 123 mm); slicing
   happens downstream (e.g. Lychee). See [Printing](#printing) for orientation
   and plate thickness.
@@ -212,3 +211,23 @@ expect to tune lift settings rather than assuming the defaults transfer.
 prints reliably. Set it to whatever your printer and resin actually do — level
 heights snap to it, so a mismatch means the slicer quietly rounds your relief
 somewhere other than where this tool reported it.
+
+## Possible improvements
+
+**Contour tracing instead of pixel columns.** Regions are currently built as
+columns on a pixel grid, so smooth edges come from making the steps smaller
+than the printer can resolve (see [Edge smoothness](#edge-smoothness)). Tracing
+region boundaries as polygons instead would reach the same printed smoothness
+in roughly a tenth of the file — a reference piece made this way is 5 MB and
+33k triangles for a full portrait, against 54 MB and 1.08M triangles here. It
+would print no better, but it is far easier to handle and slice.
+
+The reason it is not done: the current mesh is provably watertight because
+every vertex lands on an integer grid, which is also what makes nested holes
+free and the volume self-check exact. Contours mean floating-point vertices and
+real polygon triangulation with holes inside holes — the hard part of this
+problem, not a tweak. Worth doing, and worth keeping the grid path as a
+verified fallback to diff against.
+
+**Frame and rounded corners.** A raised border around the relief and rounded
+plate corners, both of which the reference has and this does not.
