@@ -129,14 +129,14 @@ def _add_level_options(sp):
 def cmd_gen(args):
     prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt)
     print(f"prompt: {prompt}")
-    generate_image(prompt, args.out)
+    generate_image(prompt, args.out, aspect=args.aspect)
     print(f"wrote {args.out} — inspect it, then run: intarsia build {args.out}")
 
 
 def cmd_run(args):
     prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt)
     print(f"prompt: {prompt}")
-    generate_image(prompt, args.image_out)
+    generate_image(prompt, args.image_out, aspect=args.aspect)
     print(f"\nwrote {args.image_out} — OPEN AND LOOK AT IT before continuing.")
     print("Check: flat solid colors, big simple shapes, no gradients or fine detail.")
     if not args.yes:
@@ -175,6 +175,8 @@ def main(argv=None):
                     help="planned number of height levels; sets the color count in the prompt")
     gn.add_argument("--raw-prompt", action="store_true",
                     help="send the prompt verbatim, without the flat-art template")
+    gn.add_argument("--aspect", metavar="W:H",
+                    help="image aspect ratio, e.g. 16:9 or 4:3 (default: model's choice)")
     gn.set_defaults(func=cmd_gen)
 
     rn = sub.add_parser("run", help="prompt -> image -> approve -> STL, end to end")
@@ -185,6 +187,8 @@ def main(argv=None):
                     help="send the prompt verbatim, without the flat-art template")
     rn.add_argument("--yes", action="store_true",
                     help="skip the image approval question (non-interactive use)")
+    rn.add_argument("--aspect", metavar="W:H",
+                    help="image aspect ratio, e.g. 16:9 or 4:3 (default: model's choice)")
     _add_level_options(rn)
     rn.add_argument("--base-mm", type=float, default=2.0,
                     help="backing plate thickness in mm (default 2.0); level 0 is flush with it")

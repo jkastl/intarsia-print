@@ -13,7 +13,9 @@ import os
 import urllib.error
 import urllib.request
 
-MODEL = "gemini-2.5-flash-image"
+# Nano Banana Pro — much stronger prompt adherence (exact color counts, flat
+# fills) than the base flash image model, which is what this pipeline needs.
+MODEL = "gemini-3-pro-image-preview"
 _URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
 # The constraints mirror the pipeline's failure modes one by one:
@@ -34,7 +36,7 @@ def build_prompt(subject, n_colors, raw=False):
     return subject if raw else TEMPLATE.format(subject=subject, colors=n_colors)
 
 
-def generate_image(prompt, out_path, api_key=None):
+def generate_image(prompt, out_path, api_key=None, aspect=None):
     """Calls Gemini, writes the first returned image to out_path (PNG/etc)."""
     api_key = api_key or os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -42,10 +44,15 @@ def generate_image(prompt, out_path, api_key=None):
             "error: set GEMINI_API_KEY (https://aistudio.google.com/apikey), "
             "or skip generation and pass your own image to `build`."
         )
+    # Nano Banana Pro is a thinking model: it returns TEXT parts alongside the
+    # IMAGE part, so both modalities must be requested.
+    config = {"responseModalities": ["TEXT", "IMAGE"]}
+    if aspect:
+        config["imageConfig"] = {"aspectRatio": aspect}
     body = json.dumps(
         {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseModalities": ["IMAGE"]},
+            "generationConfig": config,
         }
     ).encode()
     req = urllib.request.Request(
