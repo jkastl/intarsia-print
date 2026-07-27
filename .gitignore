@@ -3,3 +3,6 @@ __pycache__/
 *.stl
 levels-preview.png
 *.egg-info/
+.venv/
+outputs/
+.DS_Store

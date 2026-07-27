@@ -7,10 +7,13 @@ name = "intarsia-print"
 version = "0.1.0"
 description = "Flat graphic image or text prompt -> multi-level bas-relief STL for resin printing"
 requires-python = ">=3.10"
-dependencies = ["numpy", "pillow", "scipy"]
+dependencies = ["numpy", "pillow", "scipy", "flask"]
 
 [project.scripts]
 intarsia = "intarsia.cli:main"
 
 [tool.setuptools]
-packages = ["intarsia"]
+packages = ["intarsia", "intarsia.web"]
+
+[tool.setuptools.package-data]
+"intarsia.web" = ["static/*"]

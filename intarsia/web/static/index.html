@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>intarsia-print</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <h1>intarsia&#8209;print</h1>
+    <button id="new-session-btn" type="button">+ New session</button>
+    <div id="session-list"></div>
+  </aside>
+
+  <main id="main">
+    <section id="start-panel" class="panel">
+      <h2>Start a new piece</h2>
+      <p class="hint">Add a reference photo, some text, or both. Text says what to keep from the
+        photo and how to interpret it &mdash; e.g. "only the dog's head and neck, ignore the
+        background".</p>
+      <form id="start-form">
+        <label class="field">
+          <span>Reference photo (optional)</span>
+          <input type="file" name="image" accept="image/png,image/jpeg,image/webp">
+        </label>
+        <label class="field">
+          <span>Prompt text (optional if a photo is attached)</span>
+          <textarea name="prompt" rows="3" placeholder="a fox curled up asleep, bushy tail wrapped around itself"></textarea>
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Colors</span>
+            <input type="number" name="n_colors" value="6" min="2" max="24">
+          </label>
+          <label class="field">
+            <span>Aspect ratio</span>
+            <input type="text" name="aspect" placeholder="e.g. 4:5 (optional)">
+          </label>
+        </div>
+        <button type="submit">Generate</button>
+      </form>
+      <div id="start-error" class="error" hidden></div>
+    </section>
+
+    <section id="wizard" hidden>
+      <div class="step" id="step-gen">
+        <h2>1. Generate <span class="step-sub">flat poster art from Gemini</span></h2>
+        <form id="gen-form">
+          <label class="field">
+            <span>Prompt text</span>
+            <textarea name="prompt" rows="3"></textarea>
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>Colors</span>
+              <input type="number" name="n_colors" min="2" max="24">
+            </label>
+            <label class="field">
+              <span>Aspect ratio</span>
+              <input type="text" name="aspect">
+            </label>
+            <label class="field">
+              <span>Reference image</span>
+              <select name="ref_source"></select>
+            </label>
+          </div>
+          <button type="submit">Regenerate</button>
+        </form>
+        <div class="result" id="gen-result"></div>
+        <p class="hint">Click a previous image below to select it &mdash; it becomes the reference
+          for your next regenerate, and levels/build results already made from it come back too.</p>
+        <div class="history" id="gen-history"></div>
+      </div>
+
+      <div class="step" id="step-levels">
+        <h2>2. Levels <span class="step-sub">quantize into printable height layers</span></h2>
+        <form id="levels-form">
+          <div class="field-row">
+            <label class="field">
+              <span>Levels</span>
+              <input type="number" name="levels" min="2" max="24">
+            </label>
+            <label class="field">
+              <span>Order</span>
+              <select name="order">
+                <option value="dark-low">dark → low</option>
+                <option value="light-low">light → low</option>
+              </select>
+            </label>
+            <label class="field checkbox">
+              <input type="checkbox" name="depth_order" checked>
+              <span>Depth order (asks Gemini)</span>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>Width (mm)</span>
+              <input type="number" name="width_mm" step="0.1">
+            </label>
+            <label class="field">
+              <span>Min feature (mm)</span>
+              <input type="number" name="min_feature" step="0.1">
+            </label>
+          </div>
+          <button type="submit">Run levels check</button>
+        </form>
+        <div class="result" id="levels-result"></div>
+        <div class="history" id="levels-history"></div>
+      </div>
+
+      <div class="step" id="step-build">
+        <h2>3. Build <span class="step-sub">mesh + STL, self-checked</span></h2>
+        <form id="build-form">
+          <div class="field-row">
+            <label class="field">
+              <span>Base plate (mm)</span>
+              <input type="number" name="base_mm" step="0.1">
+            </label>
+            <label class="field">
+              <span>Step height (mm)</span>
+              <input type="number" name="step_mm" step="0.05">
+            </label>
+            <label class="field">
+              <span>Relief (mm, depth order)</span>
+              <input type="number" name="relief_mm" step="0.1">
+            </label>
+            <label class="field">
+              <span>Layer height (mm)</span>
+              <input type="number" name="layer_mm" step="0.01">
+            </label>
+          </div>
+          <button type="submit">Build STL</button>
+        </form>
+        <div class="result" id="build-result"></div>
+        <div class="history" id="build-history"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

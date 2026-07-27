@@ -38,6 +38,18 @@ def _parse_assign(items):
     return out
 
 
+def _next_free(path):
+    """If path exists, insert -2, -3, ... before the extension until free, so
+    repeated runs accumulate rather than overwrite each other's output."""
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    n = 2
+    while os.path.exists(f"{base}-{n}{ext}"):
+        n += 1
+    return f"{base}-{n}{ext}"
+
+
 def _print_report(report):
     for lvl in range(report.n_levels - 1, -1, -1):
         cov = report.coverage[lvl]
@@ -187,8 +199,9 @@ def cmd_levels(args):
     image = Image.open(args.image)
     levels, report, heights = make_levels(image, args)
     preview = side_by_side(image, levels, report, heights_mm=heights)
-    preview.save(args.out)
-    print(f"wrote {args.out} — open it and check the separation before meshing")
+    out = _next_free(args.out)
+    preview.save(out)
+    print(f"wrote {out} — open it and check the separation before meshing")
 
 
 def cmd_build(args):
@@ -206,9 +219,10 @@ def cmd_build(args):
     tris_mm = to_float_coords(tris_int, zvals, px_mm, H)
     chk = check_mesh(tris_int, tris_mm, levels, px_mm, heights)
 
-    write_stl(args.out, tris_mm)
-    size_mb = os.path.getsize(args.out) / 1e6
-    print(f"wrote {args.out}: {len(tris_mm)} triangles, {size_mb:.1f} MB")
+    out = _next_free(args.out)
+    write_stl(out, tris_mm)
+    size_mb = os.path.getsize(out) / 1e6
+    print(f"wrote {out}: {len(tris_mm)} triangles, {size_mb:.1f} MB")
     print(f"  size: {args.width_mm:.2f} x {depth_mm:.2f} x {zvals[-1]:.2f} mm, flat bottom on Z=0")
     print(f"  watertight: {'yes' if chk['watertight'] else 'NO'}"
           f"  (open edges: {chk['open_edges']}, non-manifold edges: {chk['nonmanifold_edges']})")
@@ -219,7 +233,7 @@ def cmd_build(args):
         raise SystemExit("error: mesh failed self-check, not safe to print"
                          + (" (try without --no-clean)" if args.no_clean else ""))
 
-    base = os.path.splitext(args.out)[0]
+    base = os.path.splitext(out)[0]
     side_by_side(image, levels, report, heights_mm=heights).save(base + "-levels.png")
     hillshade_image(zvals[levels + 1], px_mm).save(base + "-relief.png")
     print(f"wrote {base}-levels.png and {base}-relief.png — look at both before slicing")
@@ -266,26 +280,33 @@ def cmd_gen(args):
     prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt,
                           with_ref=bool(args.from_image))
     print(f"prompt: {prompt}")
-    generate_image(prompt, args.out, aspect=args.aspect, ref_image=args.from_image,
+    out = _next_free(args.out)
+    generate_image(prompt, out, aspect=args.aspect, ref_image=args.from_image,
                    size=args.image_size)
-    print(f"wrote {args.out} — inspect it, then run: intarsia build {args.out}")
+    print(f"wrote {out} — inspect it, then run: intarsia build {out}")
 
 
 def cmd_run(args):
     prompt = build_prompt(args.prompt, args.levels, raw=args.raw_prompt,
                           with_ref=bool(args.from_image))
     print(f"prompt: {prompt}")
-    generate_image(prompt, args.image_out, aspect=args.aspect,
+    image_out = _next_free(args.image_out)
+    generate_image(prompt, image_out, aspect=args.aspect,
                    ref_image=args.from_image, size=args.image_size)
-    print(f"\nwrote {args.image_out} — OPEN AND LOOK AT IT before continuing.")
+    print(f"\nwrote {image_out} — OPEN AND LOOK AT IT before continuing.")
     print("Check: flat solid colors, big simple shapes, no gradients or fine detail.")
     if not args.yes:
         answer = input("Proceed to STL with this image? [y/N] ").strip().lower()
         if answer not in ("y", "yes"):
             print("stopped. Re-run `intarsia run` for a new image, or tweak the prompt.")
             return
-    args.image = args.image_out
+    args.image = image_out
     cmd_build(args)
+
+
+def cmd_web(args):
+    from .web.app import main as web_main
+    web_main(host=args.host, port=args.port, debug=args.debug)
 
 
 def main(argv=None):
@@ -339,6 +360,12 @@ def main(argv=None):
                          "(e.g. 'the dog's head from this photo')")
     _add_level_options(rn)
     rn.set_defaults(func=cmd_run)
+
+    wb = sub.add_parser("web", help="local web UI for the whole pipeline, with reviewable/redoable steps")
+    wb.add_argument("--host", default="127.0.0.1")
+    wb.add_argument("--port", type=int, default=5050)
+    wb.add_argument("--debug", action="store_true")
+    wb.set_defaults(func=cmd_web)
 
     args = p.parse_args(argv)
     args.func(args)

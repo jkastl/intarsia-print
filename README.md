@@ -59,6 +59,23 @@ Every command writes a preview PNG. **Open it.** Every failure mode in this
 pipeline is silent and visual — a bad separation runs without error and
 produces an unprintable model.
 
+## Web UI
+
+A local browser UI wraps the same three steps (generate, levels, build) so
+each one is reviewable and independently redoable, instead of rerunning CLI
+commands by hand:
+
+```sh
+intarsia web            # http://127.0.0.1:5050
+```
+
+Start a session with a reference photo, some text, or both. Each step keeps
+its full history — regenerating the image (or rerunning levels/build with
+different parameters) never deletes earlier attempts, and clicking an older
+thumbnail "unwinds" back to it, restoring whatever was already built on top
+of it. Everything is written under `outputs/<session-id>/` rather than the
+repo root.
+
 ## Key options
 
 | Option | Meaning |

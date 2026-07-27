@@ -19,7 +19,7 @@ import urllib.request
 # fills) than the base flash image model, which is what this pipeline needs.
 MODEL = "gemini-3-pro-image-preview"
 # Cheap vision model for the depth-ranking question; no image output needed.
-DEPTH_MODEL = "gemini-2.5-flash"
+DEPTH_MODEL = "gemini-3.6-flash"
 _BASE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 _URL = _BASE.format(model=MODEL)
 
