@@ -27,6 +27,19 @@ intarsia run "a fox sitting under a pine tree" -n 5 --width-mm 120 -o fox.stl
 
 Step by step:
 
+From a photo — attach a reference picture and say what to keep from it:
+
+```sh
+intarsia run "only the dog's head from this photo, facing forward" \
+    --from-image my-dog.jpg -n 4 --width-mm 100 -o dog.stl
+```
+
+Gemini redraws the subject as flat poster art (it does not trace the photo);
+the usual approval stop lets you reject and retry until the flattening looks
+right.
+
+Step by step:
+
 ```sh
 # 1. generate a flat, poster-style source image (or bring your own)
 intarsia gen "a fox sitting under a pine tree" -n 5 -o fox.png
