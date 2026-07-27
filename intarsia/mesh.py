@@ -15,19 +15,41 @@ import struct
 import numpy as np
 
 
-def level_heights(n_levels, base_mm, step_mm):
-    """Top surface height of each level. Level 0 is flush with the plate."""
+def uniform_heights(n_levels, base_mm, step_mm):
+    """Evenly spaced level tops. Level 0 is flush with the plate."""
     return base_mm + np.arange(n_levels) * step_mm
 
 
-def build_mesh(levels, px_mm, base_mm, step_mm):
-    """Returns (verts_int (V,3) int32 grid coords, tris (T,3) vertex ids,
-    zvals) — grid coords are (i, j, zindex); zvals maps zindex -> mm."""
+def snap_heights(heights, layer_mm, base_mm, min_step_mm):
+    """Round level tops to whole printer layers, keeping them strictly
+    increasing by at least min_step_mm (also layer-rounded).
+
+    Resin prints in discrete layers, so a height that isn't a layer multiple
+    is silently rounded by the slicer anyway — doing it here means the STL,
+    the previews and the reported numbers all agree with what gets printed.
+    """
+    heights = np.asarray(heights, dtype=np.float64)
+    step_layers = max(1, int(round(min_step_mm / layer_mm)))
+    out = np.round(heights / layer_mm).astype(np.int64)
+    out[0] = round(base_mm / layer_mm)
+    for k in range(1, len(out)):
+        out[k] = max(out[k], out[k - 1] + step_layers)
+    return out * layer_mm
+
+
+def build_mesh(levels, heights_mm):
+    """Returns (tris_int (T,3,3) integer grid coords, zvals) — grid coords are
+    (i, j, zindex); zvals maps zindex -> mm."""
     lv = np.asarray(levels)
     H, W = lv.shape
     n = int(lv.max()) + 1
+    heights = np.asarray(heights_mm, dtype=np.float64)
+    if len(heights) < n:
+        raise ValueError(f"got {len(heights)} heights for {n} levels")
+    if np.any(np.diff(heights) <= 0) or heights[0] <= 0:
+        raise ValueError("heights must be positive and strictly increasing")
     # z index of a pixel's top = level + 1; zvals[0] = 0 (the bottom).
-    zvals = np.concatenate([[0.0], level_heights(n, base_mm, step_mm)])
+    zvals = np.concatenate([[0.0], heights[:n]])
     zi = lv.astype(np.int64) + 1
 
     quads = []  # each: (i0, j0, i1, j1, zA, zB, kind)
@@ -118,7 +140,7 @@ def to_float_coords(tris_int, zvals, px_mm, H):
     return out
 
 
-def check_mesh(tris_int, tris_mm, levels, px_mm, base_mm, step_mm):
+def check_mesh(tris_int, tris_mm, levels, px_mm, heights_mm):
     """Closure, orientation (signed volume vs analytic), non-manifold count."""
     t = tris_int
     key = (
@@ -141,8 +163,7 @@ def check_mesh(tris_int, tris_mm, levels, px_mm, base_mm, step_mm):
 
     v0, v1, v2 = tris_mm[:, 0], tris_mm[:, 1], tris_mm[:, 2]
     signed_vol = float(np.einsum("ij,ij->", v0, np.cross(v1, v2)) / 6.0)
-    heights = level_heights(int(levels.max()) + 1, base_mm, step_mm)
-    true_vol = float((heights[levels] * px_mm * px_mm).sum())
+    true_vol = float((np.asarray(heights_mm)[levels] * px_mm * px_mm).sum())
 
     return {
         "watertight": open_edges == 0 and matched,

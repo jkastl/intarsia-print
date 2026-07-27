@@ -131,20 +131,24 @@ DEPTH_PROMPT = (
     "The attached image is a flat poster-style illustration that will become "
     "a layered bas-relief carving: each color becomes one physical height "
     "layer. Its {n} colors are, as hex codes: {hexes}. "
-    "Rank ALL {n} colors by the real-world distance from the viewer of the "
-    "things they depict, farthest first. The background or sky is farthest; "
-    "parts of the subject closest to the camera (a nose, a foreground paw) "
-    "are nearest. Reply with ONLY a JSON array of the {n} hex codes, ordered "
-    "farthest to nearest, no other text."
+    "For each color, estimate how far from the viewer the thing it depicts "
+    "is, on a 0 to 100 scale: 0 is nearest to the camera (a nose, a "
+    "foreground paw), 100 is the farthest background (sky, distant scenery). "
+    "Judge the depicted scene, not the colors themselves. Use the full range, "
+    "and make the gaps proportional to the real depth gaps — two things at "
+    "nearly the same distance should get nearly the same number, and a "
+    "distant background should sit far from the subject. "
+    "Reply with ONLY a JSON object mapping each of the {n} hex codes to its "
+    "number, and no other text."
 )
 
 
-def rank_depth(level_map_png, palette_hex, api_key=None):
-    """Asks Gemini to order palette colors far -> near. Returns the ordered
-    hex list (validated to be a permutation of palette_hex).
+def depth_profile(level_map_png, palette_hex, api_key=None):
+    """Asks Gemini how far away each palette color is. Returns {hex: distance}
+    with distance in 0..100, 0 = nearest the viewer.
 
     level_map_png: PNG bytes of the *quantized* level map, so the colors the
-    model sees are exactly the hex codes it is being asked to rank.
+    model sees are exactly the hex codes it is being asked about.
     """
     api_key = _require_key(api_key)
     lower = [h.lower() for h in palette_hex]
@@ -162,14 +166,17 @@ def rank_depth(level_map_png, palette_hex, api_key=None):
         for cand in data.get("candidates", [])
         for part in cand.get("content", {}).get("parts", [])
     )
-    m = re.search(r"\[.*?\]", text, re.DOTALL)
-    try:
-        ranked = [str(h).lower() for h in json.loads(m.group(0))] if m else None
-    except json.JSONDecodeError:
-        ranked = None
-    if ranked is None or sorted(ranked) != sorted(lower):
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    profile = None
+    if m:
+        try:
+            raw = json.loads(m.group(0))
+            profile = {str(k).lower(): float(v) for k, v in raw.items()}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            profile = None
+    if profile is None or sorted(profile) != sorted(lower):
         raise SystemExit(
-            f"error: could not get a usable depth ranking from Gemini "
+            f"error: could not get a usable depth profile from Gemini "
             f"(reply: {text[:300]!r}). Pin levels manually with --assign."
         )
-    return ranked
+    return profile

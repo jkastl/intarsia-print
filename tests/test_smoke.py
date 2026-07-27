@@ -4,7 +4,7 @@ volume and exact physical size. Run with: python3 tests/test_smoke.py"""
 import numpy as np
 
 from intarsia.clean import clean_levels
-from intarsia.mesh import build_mesh, check_mesh, to_float_coords
+from intarsia.mesh import build_mesh, check_mesh, to_float_coords, uniform_heights
 from intarsia.quantize import quantize
 from PIL import Image
 
@@ -24,9 +24,10 @@ def test_pipeline():
     levels, _ = clean_levels(levels, 3, 2.0)
 
     px_mm = 100.0 / 80
-    tris_int, zvals = build_mesh(levels, px_mm, base_mm=2.0, step_mm=1.0)
+    heights = uniform_heights(3, base_mm=2.0, step_mm=0.4)
+    tris_int, zvals = build_mesh(levels, heights)
     tris_mm = to_float_coords(tris_int, zvals, px_mm, 60)
-    chk = check_mesh(tris_int, tris_mm, levels, px_mm, 2.0, 1.0)
+    chk = check_mesh(tris_int, tris_mm, levels, px_mm, heights)
     assert chk["watertight"], chk
     assert chk["volume_ok"], chk
 
