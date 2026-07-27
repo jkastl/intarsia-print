@@ -104,6 +104,10 @@ def _compute_heights(args, n_levels, rel):
     else:
         h = uniform_heights(n_levels, args.base_mm, args.step_mm)
         how = f"uniform {args.step_mm} mm steps"
+    if args.base_mm < args.layer_mm:
+        raise SystemExit(f"error: --base-mm {args.base_mm} is thinner than one "
+                         f"{args.layer_mm} mm layer; the plate needs at least one layer "
+                         "(and realistically 2 mm — see README)")
     h = snap_heights(h, args.layer_mm, args.base_mm, args.min_step_mm)
     print(f"  heights ({how}, snapped to {args.layer_mm * 1000:.0f} um layers): "
           + ", ".join(f"L{k} {v:.2f}" for k, v in enumerate(h)) + " mm")
