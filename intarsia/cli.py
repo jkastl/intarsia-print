@@ -142,7 +142,9 @@ def make_levels(image, args):
         levels, stats = clean_levels(levels, args.levels, min_feature_px)
         report.coverage = stats["coverage"]
         print(f"  cleanup: reassigned {stats['changed_fraction']:.2%} of pixels "
-              f"(min feature {args.min_feature} mm = {min_feature_px:.1f} px at {args.width_mm} mm wide)")
+              f"(min feature {args.min_feature} mm = {min_feature_px:.1f} px at {args.width_mm} mm wide)"
+              + (f", unpinched {stats['pinches_fixed']} corner touches"
+                 if stats["pinches_fixed"] else ""))
         for lvl in range(args.levels):
             if 0 < report.coverage[lvl] < 0.005:
                 print(f"  warning: L{lvl} covers only {report.coverage[lvl]:.2%} after cleanup — "
@@ -182,8 +184,9 @@ def cmd_build(args):
     print(f"  volume: mesh {chk['signed_volume_mm3']:.1f} mm3, "
           f"analytic {chk['analytic_volume_mm3']:.1f} mm3 "
           f"{'(match)' if chk['volume_ok'] else '(MISMATCH — orientation bug)'}")
-    if not chk["watertight"] or not chk["volume_ok"]:
-        raise SystemExit("error: mesh failed self-check, not safe to print")
+    if not chk["watertight"] or not chk["volume_ok"] or chk["nonmanifold_edges"]:
+        raise SystemExit("error: mesh failed self-check, not safe to print"
+                         + (" (try without --no-clean)" if args.no_clean else ""))
 
     base = os.path.splitext(args.out)[0]
     side_by_side(image, levels, report, heights_mm=heights).save(base + "-levels.png")

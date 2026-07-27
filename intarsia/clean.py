@@ -34,6 +34,41 @@ def _mode_filter(levels, n_levels, passes=2):
     return levels
 
 
+def _break_diagonal_pinches(levels, n_levels, max_passes=16):
+    """Remove corner pinches, where solid meets solid only diagonally.
+
+    At such a corner four wall faces share one vertical edge: non-manifold,
+    and it prints as a zero-thickness join that snaps off during cleanup.
+
+    The mesh is built in height bands, so the test is per band, not per
+    level. Around a 2x2 of heights a b / c d, band k is pinched when one
+    diagonal is solid there and the other is not, which happens for some k
+    exactly when one diagonal lies entirely above the other. Unequal levels
+    pinch too — 3 0 / 0 2 is solid on one diagonal only in bands 0 and 1 —
+    so comparing levels for equality is not enough.
+
+    Each fix raises the lower pixel to its diagonal neighbour's level,
+    filling the pinch rather than severing it. Levels only ever increase, so
+    this terminates.
+    """
+    lv = levels.copy()
+    fixed = 0
+    for _ in range(max_passes):
+        a, b = lv[:-1, :-1], lv[:-1, 1:]
+        c, d = lv[1:, :-1], lv[1:, 1:]
+        main_hi = np.maximum(b, c) < np.minimum(a, d)  # a,d strictly above b,c
+        anti_hi = np.maximum(a, d) < np.minimum(b, c)  # b,c strictly above a,d
+        site = main_hi | anti_hi
+        if not site.any():
+            break
+        jj, ii = np.nonzero(site)
+        mh = main_hi[jj, ii]
+        # main high -> raise bottom-left to a; anti high -> raise top-left to b
+        lv[np.where(mh, jj + 1, jj), ii] = np.where(mh, a[jj, ii], b[jj, ii])
+        fixed += len(jj)
+    return lv, fixed
+
+
 def clean_levels(levels, n_levels, min_feature_px):
     """Returns (cleaned levels array, stats dict)."""
     before = levels
@@ -75,8 +110,11 @@ def clean_levels(levels, n_levels, min_feature_px):
         levels = levels.copy()
         levels[unassigned] = levels[iy[unassigned], ix[unassigned]]
 
+    levels, pinches = _break_diagonal_pinches(levels, n_levels)
+
     stats = {
         "changed_fraction": float((levels != before).mean()),
         "coverage": np.bincount(levels.ravel(), minlength=n_levels) / levels.size,
+        "pinches_fixed": pinches,
     }
     return levels, stats

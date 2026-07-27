@@ -1,10 +1,16 @@
 """Level map -> watertight binary STL.
 
-Geometry is a voxel-column surface: one quad per pixel on top, banded
-vertical walls at level changes, flat bottom at Z=0. Every vertex lies on
-the integer grid (column i, row j, z-level index), and walls are split at
-every intermediate level height, so shared edges match exactly — no
-T-junctions, no pinholes, no contour/nested-hole handling at all.
+Geometry is a voxel-column surface: flat tops at each level, banded vertical
+walls at level changes, flat bottom at Z=0. Every vertex lies on a doubled
+integer grid (column i, row j, z-level index) so rectangle centres stay
+exact, and walls are split at every intermediate level height, so shared
+edges match exactly — no T-junctions, no pinholes, no contour/nested-hole
+handling at all.
+
+Flat areas are merged: a quadtree finds constant-level rectangles and each
+becomes a fan from its centre that still carries every integer point on its
+boundary. That keeps the vertex-exactness above while making a large flat
+region cost its perimeter rather than its area.
 
 Coordinates: Z-up, bottom at Z=0, x = width (exact mm), y = image height,
 image top row at max y so the STL matches the image seen from above.
@@ -52,17 +58,14 @@ def build_mesh(levels, heights_mm):
     zvals = np.concatenate([[0.0], heights[:n]])
     zi = lv.astype(np.int64) + 1
 
-    quads = []  # each: (i0, j0, i1, j1, zA, zB, kind)
+    faces = []  # flat horizontal surfaces, already triangulated
+    quads = []  # vertical walls, assembled below
 
-    jj, ii = np.mgrid[0:H, 0:W]
-
-    def emit_horiz(z_idx, flip):
-        """Full-coverage horizontal quads at per-pixel z (tops or bottom)."""
-        i, j, z = ii.ravel(), jj.ravel(), np.broadcast_to(z_idx, (H, W)).ravel()
-        quads.append(("h", i, j, z, np.full(z.shape, flip, dtype=bool)))
-
-    emit_horiz(zi, False)  # tops, +Z
-    emit_horiz(np.zeros_like(zi), True)  # bottom, -Z
+    # Tops: one flat face per constant-level rectangle, not per pixel.
+    for i0, j0, i1, j1, k in _quadtree_rects(lv):
+        faces.append(_flat_rect(i0, j0, i1, j1, k + 1, flip=False))
+    # Bottom: the whole plate is one rectangle.
+    faces.append(_flat_rect(0, 0, W, H, 0, flip=True))
 
     # Interior + perimeter walls, banded at every level height.
     # For x-facing walls at column boundary b (0..W): left pixel is (j, b-1),
@@ -97,28 +100,21 @@ def build_mesh(levels, heights_mm):
             flip = zy_b[m] > zy_t[m]
             quads.append(("y", i, b, np.full(i.shape, k), flip))
 
-    # Assemble quads into triangles with integer corner vertices.
-    tri_corners = []
+    # Assemble wall quads into triangles with integer corner vertices.
+    tri_corners = list(faces)
     for kind, a, b, z, flip in quads:
-        if kind == "h":
-            # pixel (j=b? no: a=i, b=j) corners at z
-            i, j = a, b
-            c0 = np.stack([i, j + 1, z], 1)  # x0, y_low
-            c1 = np.stack([i + 1, j + 1, z], 1)
-            c2 = np.stack([i + 1, j, z], 1)
-            c3 = np.stack([i, j, z], 1)
-        elif kind == "x":
+        if kind == "x":
             # boundary at x=a, spans y over row j=b, z band z..z+1
-            i, j = a, b
-            c0 = np.stack([i, j + 1, z], 1)
+            i, j = a * 2, b * 2
+            c0 = np.stack([i, j + 2, z], 1)
             c1 = np.stack([i, j, z], 1)
             c2 = np.stack([i, j, z + 1], 1)
-            c3 = np.stack([i, j + 1, z + 1], 1)
+            c3 = np.stack([i, j + 2, z + 1], 1)
         else:  # "y": boundary at row j=b, spans x over column i=a
-            i, j = a, b
+            i, j = a * 2, b * 2
             c0 = np.stack([i, j, z], 1)
-            c1 = np.stack([i + 1, j, z], 1)
-            c2 = np.stack([i + 1, j, z + 1], 1)
+            c1 = np.stack([i + 2, j, z], 1)
+            c2 = np.stack([i + 2, j, z + 1], 1)
             c3 = np.stack([i, j, z + 1], 1)
         f = flip[:, None]
         # two triangles per quad: (c0,c1,c2) and (c0,c2,c3), reversed when flipped
@@ -131,11 +127,83 @@ def build_mesh(levels, heights_mm):
     return tris_int, zvals
 
 
+def _quadtree_rects(lv):
+    """Split the level map into axis-aligned rectangles of constant level.
+
+    A quadtree rather than greedy strip meshing: a rectangle's cost here is
+    its perimeter (see _flat_rect), so long thin strips — which is what
+    greedy meshing degenerates to along a diagonal edge — save nothing.
+    Recursive halving keeps big interior blocks square and only refines
+    down to single pixels where levels actually change.
+    """
+    H, W = lv.shape
+    out = []
+    stack = [(0, 0, W, H)]
+    while stack:
+        i0, j0, i1, j1 = stack.pop()
+        block = lv[j0:j1, i0:i1]
+        first = block[0, 0]
+        if (block == first).all():
+            out.append((i0, j0, i1, j1, int(first)))
+            continue
+        im, jm = (i0 + i1) // 2, (j0 + j1) // 2
+        for a, b, c, d in ((i0, j0, im, jm), (im, j0, i1, jm),
+                           (i0, jm, im, j1), (im, jm, i1, j1)):
+            if c > a and d > b:
+                stack.append((a, b, c, d))
+    return out
+
+
+def _perimeter(i0, j0, i1, j1):
+    """Every integer grid point on the rectangle boundary, walked in the order
+    that gives a +Z normal. Doubled coordinates."""
+    xs = np.arange(i0, i1 + 1) * 2
+    ys = np.arange(j0, j1 + 1) * 2
+    bottom = np.stack([xs, np.full(xs.shape, j1 * 2)], 1)
+    right = np.stack([np.full(ys.shape, i1 * 2), ys[::-1]], 1)
+    top = np.stack([xs[::-1], np.full(xs.shape, j0 * 2)], 1)
+    left = np.stack([np.full(ys.shape, i0 * 2), ys], 1)
+    # each run repeats the next run's first point, so drop the last of each
+    return np.concatenate([bottom[:-1], right[:-1], top[:-1], left[:-1]])
+
+
+def _flat_rect(i0, j0, i1, j1, z, flip):
+    """A flat rectangle as a fan from its centre, with every integer boundary
+    point as a vertex.
+
+    Keeping the boundary points is what makes merging safe: a 64x64 block
+    still meets its single-pixel neighbours vertex-to-vertex, so no
+    T-junctions appear and the mesh stays closed under edge matching. Cost is
+    therefore the perimeter, 2*(w+h) triangles, versus 2*w*h per pixel — so
+    for 1-wide strips, where that trade loses, fall back to per-pixel quads.
+    """
+    w, h = i1 - i0, j1 - j0
+    if w == 1 or h == 1:
+        jj, ii = np.mgrid[j0:j1, i0:i1]
+        i, j = ii.ravel() * 2, jj.ravel() * 2
+        zz = np.full(i.shape, z)
+        c0 = np.stack([i, j + 2, zz], 1)
+        c1 = np.stack([i + 2, j + 2, zz], 1)
+        c2 = np.stack([i + 2, j, zz], 1)
+        c3 = np.stack([i, j, zz], 1)
+        tris = np.concatenate([np.stack([c0, c1, c2], 1), np.stack([c0, c2, c3], 1)])
+        return tris[:, ::-1, :] if flip else tris
+
+    P = _perimeter(i0, j0, i1, j1)
+    Q = np.roll(P, -1, axis=0)
+    tri = np.empty((len(P), 3, 3), dtype=np.int64)
+    tri[:, 0, :2] = (i0 + i1, j0 + j1)  # centre: exact in doubled coords
+    tri[:, 1, :2] = P
+    tri[:, 2, :2] = Q
+    tri[:, :, 2] = z
+    return tri[:, ::-1, :] if flip else tri
+
+
 def to_float_coords(tris_int, zvals, px_mm, H):
-    """Integer grid coords -> mm coords (float64). Image row 0 -> max y."""
+    """Doubled integer grid coords -> mm coords (float64). Row 0 -> max y."""
     out = np.empty(tris_int.shape, dtype=np.float64)
-    out[..., 0] = tris_int[..., 0] * px_mm
-    out[..., 1] = (H - tris_int[..., 1]) * px_mm
+    out[..., 0] = tris_int[..., 0] * (px_mm / 2)
+    out[..., 1] = (2 * H - tris_int[..., 1]) * (px_mm / 2)
     out[..., 2] = zvals[tris_int[..., 2]]
     return out
 
