@@ -248,3 +248,7 @@ verified fallback to diff against.
 
 **Frame and rounded corners.** A raised border around the relief and rounded
 plate corners, both of which the reference has and this does not.
+
+## License
+
+[MIT](LICENSE)

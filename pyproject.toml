@@ -7,6 +7,7 @@ name = "intarsia-print"
 version = "0.1.0"
 description = "Flat graphic image or text prompt -> multi-level bas-relief STL for resin printing"
 requires-python = ">=3.10"
+license = {text = "MIT"}
 dependencies = ["numpy", "pillow", "scipy", "flask"]
 
 [project.scripts]
